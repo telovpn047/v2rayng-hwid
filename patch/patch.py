@@ -29,31 +29,60 @@ def find_containing(text):
 def must(k, msg):
     if not k: sys.exit("✗ " + msg)
 
+
+def append_ctor_param(src, class_name, decl):
+    """`class <ad>(...)` kurucusunun kapanış parantezinden hemen önce parametre ekler.
+    Sona eklendiği için konumsal (sırayla) yapılan çağrılar etkilenmez."""
+    m = re.search(r'class\s+' + class_name + r'\s*\(', src)
+    if not m: return src, 0
+    i = m.end(); depth = 1
+    while i < len(src) and depth:
+        c = src[i]
+        if c == '(': depth += 1
+        elif c == ')': depth -= 1
+        i += 1
+    close = i - 1                      # kapanış ')' konumu
+    body = src[m.end():close]
+    stripped = body.rstrip()
+    sep = "" if stripped.endswith(",") else ","
+    new_body = stripped + sep + "\n    " + decl + ",\n"
+    return src[:m.end()] + new_body + src[close:], 1
+
 # 0) Yardımcı sınıf
 dst = os.path.join(SRC, "com", "v2ray", "ang", "patch")
 os.makedirs(dst, exist_ok=True)
 write(os.path.join(dst, "SubHeaders.kt"), read(os.path.join(HERE, "SubHeaders.kt")))
 print("[0] SubHeaders.kt eklendi")
 
-# 1) Model: SubscriptionItem.hwid
+# 1) Model: SubscriptionItem.hwid (sona eklenir)
 f = find_file("SubscriptionItem.kt"); s = read(f)
-s, k = re.subn(r'(var\s+userAgent\s*:\s*String\?\s*=\s*null)(\s*,)?', r'\1,\n    var hwid: String? = null,', s, count=1)
-must(k, "SubscriptionItem.userAgent bulunamadı")
-s = s.replace(",,", ",")
-write(f, s); print("[1] SubscriptionItem.hwid eklendi")
+if "hwid" not in s:
+    s, k = append_ctor_param(s, "SubscriptionItem", "var hwid: String? = null")
+    must(k, "SubscriptionItem sınıfı bulunamadı")
+    write(f, s)
+print("[1] SubscriptionItem.hwid eklendi")
 
-# 2) İstek modeli: UrlContentRequest.hwid
+# 2) İstek modeli: UrlContentRequest.hwid (sona eklenir)
 f = find_containing("class UrlContentRequest"); s = read(f)
-s, k = re.subn(r'(val\s+userAgent\s*:\s*String\?\s*(?:=\s*null)?)(\s*,)?', r'\1,\n    val hwid: String? = null,', s, count=1)
-must(k, "UrlContentRequest.userAgent bulunamadı")
-s = s.replace(",,", ",")
-write(f, s); print(f"[2] UrlContentRequest.hwid eklendi ({os.path.basename(f)})")
+if "hwid" not in s:
+    s, k = append_ctor_param(s, "UrlContentRequest", "val hwid: String? = null")
+    must(k, "UrlContentRequest sınıfı bulunamadı")
+    write(f, s)
+print(f"[2] UrlContentRequest.hwid eklendi ({os.path.basename(f)})")
 
-# 3) AngConfigManager: her UrlContentRequest(userAgent = userAgent, ...) çağrısına hwid
+# 3) AngConfigManager: sadece abonelik güncelleme bölümünde (userAgent'ın okunduğu satırdan sonraki 80 satır)
 f = find_file("AngConfigManager.kt"); s = read(f)
-s, k = re.subn(r'(userAgent\s*=\s*userAgent\s*,)', r'\1\n                        hwid = it.subscription.hwid,', s)
-must(k, "AngConfigManager'da 'userAgent = userAgent,' bulunamadı")
-write(f, s); print(f"[3] AngConfigManager: {k} çağrıya hwid eklendi")
+anchor = "val userAgent = it.subscription.userAgent"
+must(anchor in s, "AngConfigManager'da 'val userAgent = it.subscription.userAgent' yok")
+a = s.index(anchor)
+s = s[:a] + anchor + "\n            val hwid = it.subscription.hwid" + s[a + len(anchor):]
+a = s.index(anchor)
+lines_after = s[a:].split("\n")
+region = "\n".join(lines_after[:80]); rest = "\n".join(lines_after[80:])
+region, k = re.subn(r'(userAgent\s*=\s*userAgent\s*,)', r'\1\n                        hwid = hwid,', region)
+must(k, "abonelik isteğinde 'userAgent = userAgent,' yok")
+s = s[:a] + region + ("\n" + rest if rest else "")
+write(f, s); print(f"[3] AngConfigManager: {k} abonelik isteğine hwid eklendi")
 
 # 4) HttpUtil: getUrlContentWithUserAgent içinde OkHttp başlıkları
 f = find_file("HttpUtil.kt"); s = read(f)
@@ -73,9 +102,9 @@ write(lay, s); print("[5] layout: HWID alanı eklendi")
 
 # 5b) Etiket metni
 n = 0
-for strf in glob.glob(os.path.join(main, "res", "values*", "strings.xml")):
+for strf in glob.glob(os.path.join(main, "res", "values*", "*.xml")):
     t = read(strf)
-    if "sub_setting_user_agent" in t and "sub_setting_hwid" not in t:
+    if '<string name="sub_setting_user_agent"' in t and "sub_setting_hwid" not in t:
         t = re.sub(r'(<string name="sub_setting_user_agent">.*?</string>)',
                    lambda mm: mm.group(1) + '\n    <string name="sub_setting_hwid">HWID (boş = gönderilmez)</string>', t, count=1, flags=re.S)
         write(strf, t); n += 1

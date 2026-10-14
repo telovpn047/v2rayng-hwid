@@ -11,48 +11,87 @@ jobs:
     timeout-minutes: 90
     env: { GH_TOKEN: "${{ github.token }}" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
       - name: v2rayNG kaynağını indir
         run: |
           TAG="${{ github.event.inputs.upstream_tag }}"
           [ -z "$TAG" ] && TAG=$(gh api repos/2dust/v2rayNG/releases/latest -q .tag_name)
           echo "UP_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "v2rayNG $TAG"
           git clone --depth 1 --branch "$TAG" https://github.com/2dust/v2rayNG.git up
           cd up && git submodule update --init --recursive
-      - uses: actions/setup-java@v4
+
+      - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: '21' }
-      - name: Android NDK
+
+      - name: Android SDK platform / build-tools / NDK (resmi iş akışından)
         run: |
           WF=up/.github/workflows/build.yml
           NDK=$(grep -oE 'ndk;[0-9.]+' "$WF" | head -1 | cut -d';' -f2); NDK=${NDK:-29.0.14206865}
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK" >/dev/null
+          PLAT=$(grep -oE 'platforms;android-[0-9.]+' "$WF" | head -1 || true)
+          BT=$(grep -oE 'build-tools;[0-9.]+' "$WF" | head -1 || true)
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses >/dev/null || true
+          "$SDKM" --install "ndk;$NDK" $PLAT $BT >/dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK" >> "$GITHUB_ENV"
           G=up/V2rayNG/app/build.gradle.kts
           grep -q 'ndkVersion' "$G" || sed -i "0,/^android {/s//android {\n    ndkVersion = \"$NDK\"/" "$G"
+          echo "NDK=$NDK PLAT=$PLAT BT=$BT"
+
       - name: hev-socks5-tunnel
         run: cd up && bash compile-hevtun.sh && cp -r libs V2rayNG/app
+
       - name: libv2ray.aar (Xray)
         run: |
           cd up
-          SHA=$(git rev-parse HEAD:AndroidLibXrayLite)
-          T=$(git ls-remote --tags https://github.com/2dust/AndroidLibXrayLite | grep "^$SHA" | head -1 | sed -E 's#.*refs/tags/##; s#\^\{\}##')
+          T=$(cd AndroidLibXrayLite && git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -z "$T" ]; then
+            SHA=$(git rev-parse HEAD:AndroidLibXrayLite)
+            T=$(git ls-remote --tags https://github.com/2dust/AndroidLibXrayLite | grep "^$SHA" | head -1 | sed -E 's#.*refs/tags/##; s#\^\{\}##')
+          fi
           [ -z "$T" ] && T=$(gh api repos/2dust/AndroidLibXrayLite/releases/latest -q .tag_name)
+          echo "Xray AAR: $T"
           mkdir -p V2rayNG/app/libs
           curl -fL --retry 3 -o V2rayNG/app/libs/libv2ray.aar "https://github.com/2dust/AndroidLibXrayLite/releases/download/$T/libv2ray.aar"
+
       - name: HWID yaması
         run: python3 patch/patch.py up
-      - name: APK derle (debug, kendi imzası)
-        run: cd up/V2rayNG && chmod +x gradlew && ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: APK derle
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          cd up/V2rayNG && chmod +x gradlew
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/k.jks"
+            ./gradlew assemblePlaystoreRelease --no-daemon --stacktrace \
+              -Pandroid.injected.signing.store.file="$RUNNER_TEMP/k.jks" \
+              -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+              -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+              -Pandroid.injected.signing.key.password="$KEYSTORE_PASSWORD"
+            rm -f "$RUNNER_TEMP/k.jks"
+          else
+            echo "::warning::KEYSTORE_BASE64 yok: debug imzasıyla derleniyor (her derlemede imza değişir)"
+            ./gradlew assemblePlaystoreDebug --no-daemon --stacktrace
+          fi
+
       - name: APK topla
         run: |
           mkdir -p out
           A=up/V2rayNG/app/build/outputs/apk
-          U=$(find "$A" -name '*universal*.apk' | grep -iv fdroid | head -1); [ -z "$U" ] && U=$(find "$A" -name '*.apk' | head -1)
+          find "$A" -name '*.apk'
+          U=$(find "$A" -name '*universal*.apk' | head -1)
+          [ -z "$U" ] && U=$(find "$A" -name '*arm64-v8a*.apk' | head -1)
+          [ -z "$U" ] && { echo "APK bulunamadı"; exit 1; }
           cp "$U" out/v2rayNG-hwid.apk
           ls -la out
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
           name: v2rayNG-HWID ${{ github.run_number }} (v2rayNG ${{ env.UP_TAG }})
-          files: out/*.apk
+          files: out/v2rayNG-hwid.apk
           make_latest: true
