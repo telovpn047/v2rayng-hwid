@@ -1,20 +1,19 @@
 package com.v2ray.ang.patch
 
 import android.os.Build
-import java.net.URLConnection
 
 /**
- * Abonelik başına elle girilen HWID ve ek başlıklar.
- * Değer boşsa ilgili başlık hiç gönderilmez (v2rayNG varsayılan davranışı korunur).
- * HWID girilmişse Remnawave'in beklediği başlık seti gönderilir: x-hwid, x-device-os, x-ver-os, x-device-model.
+ * Abonelik başına elle girilen HWID.
+ * Boşsa hiçbir başlık eklenmez (v2rayNG'nin varsayılan davranışı aynen kalır).
+ * Doluysa Remnawave'in beklediği başlıklar: x-hwid, x-device-os, x-ver-os, x-device-model.
  */
 object SubHeaders {
 
-    /** "x-hwid: abc" ya da "x-hwid=abc" satırlarını da destekler; sade bir değer de kabul edilir. */
+    /** Sade değer ya da "x-hwid: değer" / "x-hwid=değer" biçimi kabul edilir. */
     fun parseHwid(raw: String?): String {
         val t = raw?.trim().orEmpty()
         if (t.isEmpty()) return ""
-        val m = Regex("(?i)x-hwid\\s*[:=]\\s*(.+)").find(t)
+        val m = Regex("(?i)^x-hwid\\s*[:=]\\s*(.+)$").find(t)
         return (m?.groupValues?.get(1) ?: t).trim()
     }
 
@@ -29,19 +28,16 @@ object SubHeaders {
         )
     }
 
-    /** HttpURLConnection'a HWID başlıklarını ekler (User-Agent'a dokunmaz). */
+    /** OkHttp Request.Builder'a HWID başlıklarını ekler. */
     @JvmStatic
-    fun inject(c: URLConnection?, hwid: String?) {
-        try {
-            if (c == null) return
-            for ((k, v) in headersFor(hwid)) c.setRequestProperty(k, v)
-        } catch (_: Throwable) {}
+    fun apply(b: okhttp3.Request.Builder, hwid: String?) {
+        for ((k, v) in headersFor(hwid)) b.header(k, v)
     }
 
     private fun clean(s: String?): String {
         if (s.isNullOrEmpty()) return ""
-        val b = StringBuilder()
-        for (ch in s.trim()) b.append(if (ch.code in 0x20..0x7e) ch else '_')
-        return b.toString()
+        val sb = StringBuilder()
+        for (ch in s.trim()) sb.append(if (ch.code in 0x20..0x7e) ch else '_')
+        return sb.toString()
     }
 }

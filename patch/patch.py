@@ -1,123 +1,106 @@
 #!/usr/bin/env python3
-"""v2rayNG'ye abonelik başına elle HWID girme özelliği ekler. Markalama/değişiklik yapmaz.
-Kullanım: python3 patch/patch.py <v2rayNG-kök-dizini>"""
+"""v2rayNG'ye abonelik başına elle HWID ekler. Akış, User-Agent'ın gerçek yolunu birebir izler:
+SubscriptionItem.hwid -> AngConfigManager -> UrlContentRequest.hwid -> HttpUtil (OkHttp başlıkları).
+Her adım hedefini bulamazsa açık hata ile durur."""
 import os, re, sys, glob
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 root = os.path.abspath(sys.argv[1])
 app = os.path.join(root, "V2rayNG", "app")
 main = os.path.join(app, "src", "main")
-kt = os.path.join(main, "kotlin")
-if not os.path.isdir(kt):
-    kt = os.path.join(main, "java")
-assert os.path.isdir(kt), f"kaynak bulunamadı: {kt}"
+SRC = os.path.join(main, "java")
+if not os.path.isdir(SRC):
+    SRC = os.path.join(main, "kotlin")
+assert os.path.isdir(SRC), f"kaynak yok: {SRC}"
 
 def read(p): return open(p, encoding="utf-8").read()
 def write(p, s): open(p, "w", encoding="utf-8").write(s)
-def find(name):
-    for dp, _, fs in os.walk(kt):
+def find_file(name):
+    for dp, _, fs in os.walk(SRC):
         if name in fs: return os.path.join(dp, name)
-    return None
+    sys.exit(f"✗ {name} bulunamadı")
+def find_containing(text):
+    for dp, _, fs in os.walk(SRC):
+        for fn in fs:
+            if fn.endswith(".kt"):
+                p = os.path.join(dp, fn)
+                if text in read(p): return p
+    sys.exit(f"✗ '{text}' içeren dosya yok")
+def must(k, msg):
+    if not k: sys.exit("✗ " + msg)
 
-def rx_sub(pat, repl, s, n=0, flags=0):
-    return re.subn(pat, repl, s, count=n, flags=flags)
-
-changed = []
-
-# 0) Yardımcı sınıfı kopyala
-dst = os.path.join(kt, "com", "v2ray", "ang", "patch")
+# 0) Yardımcı sınıf
+dst = os.path.join(SRC, "com", "v2ray", "ang", "patch")
 os.makedirs(dst, exist_ok=True)
 write(os.path.join(dst, "SubHeaders.kt"), read(os.path.join(HERE, "SubHeaders.kt")))
 print("[0] SubHeaders.kt eklendi")
 
-# 1) Veri modeli: SubscriptionItem'a customHwid alanı ekle
-f = find("SubscriptionItem.kt")
-assert f, "SubscriptionItem.kt yok"
-s = read(f)
-if "customHwid" not in s:
-    # customUserAgent zaten varsa onun yanına; yoksa enabled'dan sonra ekle
-    if "customUserAgent" in s:
-        s, k = rx_sub(r'(var\s+customUserAgent\s*:\s*String\s*=\s*"")',
-                      r'\1,\n    var customHwid: String = ""', s, 1)
-    else:
-        s, k = rx_sub(r'(var\s+enabled\s*:\s*Boolean\s*=\s*true)',
-                      r'\1,\n    var customUserAgent: String = "",\n    var customHwid: String = ""', s, 1)
-    assert k, "SubscriptionItem alanı eklenemedi"
-    write(f, s); changed.append(f); print("[1] SubscriptionItem.customHwid eklendi")
+# 1) Model: SubscriptionItem.hwid
+f = find_file("SubscriptionItem.kt"); s = read(f)
+s, k = re.subn(r'(var\s+userAgent\s*:\s*String\?\s*=\s*null)(\s*,)?', r'\1,\n    var hwid: String? = null,', s, count=1)
+must(k, "SubscriptionItem.userAgent bulunamadı")
+s = s.replace(",,", ",")
+write(f, s); print("[1] SubscriptionItem.hwid eklendi")
 
-# 2) Abonelik güncellemesinde HWID başlığını enjekte et
-#    v2rayNG aboneliği AngConfigManager / SubscriptionUpdater içinde HttpURLConnection ile çeker.
-inject_done = 0
-for cand in ("AngConfigManager.kt", "SubscriptionUpdater.kt", "SpeedtestManager.kt"):
-    f = find(cand)
-    if not f: continue
-    s = read(f)
-    if "openConnection()" not in s or "SubHeaders.inject" in s:
-        continue
-    # abonelik nesnesinin değişken adını yakalamaya çalış (customUserAgent kullanılan yerden)
-    hwid_expr = None
-    m = re.search(r'(\w+)\.customUserAgent', s)
-    if m:
-        hwid_expr = f"{m.group(1)}.customHwid"
-    # her openConnection sonrası inject ekle
-    def add_inject(mm):
-        global inject_done
-        indent = mm.group(1)
-        var = mm.group(2)
-        expr = hwid_expr or '""'
-        inject_done += 1
-        return f"{mm.group(0)}\n{indent}com.v2ray.ang.patch.SubHeaders.inject({var}, {expr})"
-    s2, k = rx_sub(r'(?m)^(\s*)(?:val|var)\s+(\w+)\s*=\s*[^\n]*openConnection\(\)[^\n]*$',
-                   add_inject, s)
-    if k:
-        write(f, s2); changed.append(f); print(f"[2] {cand}: {k} yerde HWID enjekte edildi")
+# 2) İstek modeli: UrlContentRequest.hwid
+f = find_containing("class UrlContentRequest"); s = read(f)
+s, k = re.subn(r'(val\s+userAgent\s*:\s*String\?\s*(?:=\s*null)?)(\s*,)?', r'\1,\n    val hwid: String? = null,', s, count=1)
+must(k, "UrlContentRequest.userAgent bulunamadı")
+s = s.replace(",,", ",")
+write(f, s); print(f"[2] UrlContentRequest.hwid eklendi ({os.path.basename(f)})")
 
-if inject_done == 0:
-    print("[2] UYARI: openConnection bulunamadı; manuel kontrol gerek")
+# 3) AngConfigManager: her UrlContentRequest(userAgent = userAgent, ...) çağrısına hwid
+f = find_file("AngConfigManager.kt"); s = read(f)
+s, k = re.subn(r'(userAgent\s*=\s*userAgent\s*,)', r'\1\n                        hwid = it.subscription.hwid,', s)
+must(k, "AngConfigManager'da 'userAgent = userAgent,' bulunamadı")
+write(f, s); print(f"[3] AngConfigManager: {k} çağrıya hwid eklendi")
 
-# 3) Abonelik düzenleme ekranına HWID alanı (layout + Activity)
-#    layout: activity_sub_edit.xml içine customUserAgent alanının benzeri bir alan ekle
-lay = None
-for p in glob.glob(os.path.join(main, "res", "layout", "*sub*edit*.xml")) + \
-         glob.glob(os.path.join(main, "res", "layout", "*edit*sub*.xml")):
-    lay = p; break
-if lay:
-    s = read(lay)
-    if "et_custom_hwid" not in s:
-        # customUserAgent (et_custom_... ya da benzeri) bloğunu kopyalayıp hwid'e çevir
-        m = re.search(r'(<com\.google\.android\.material\.textfield\.TextInputLayout[\s\S]*?et_[a-zA-Z_]*(?:agent|Agent)[\s\S]*?</com\.google\.android\.material\.textfield\.TextInputLayout>)', s)
-        if not m:
-            m = re.search(r'(<EditText[\s\S]*?et_[a-zA-Z_]*(?:agent|Agent)[\s\S]*?/>)', s)
-        if m:
-            block = m.group(1)
-            nb = block
-            nb = re.sub(r'et_[a-zA-Z_]*[aA]gent', 'et_custom_hwid', nb)
-            nb = re.sub(r'(android:hint="?)[^"\n]*', r'\1HWID (boş = otomatik)', nb, count=1)
-            s = s.replace(block, block + "\n" + nb, 1)
-            write(lay, s); changed.append(lay); print("[3] layout: HWID alanı eklendi")
-        else:
-            print("[3] UYARI: layout'ta User-Agent alanı bulunamadı")
-    # Activity: oku/yaz
-    act = find("SubEditActivity.kt") or find("SubEditActivity.java")
-    if act:
-        s = read(act)
-        if "et_custom_hwid" not in s and "customHwid" not in s:
-            # binding ya da findViewById biçimini customUserAgent'tan türet
-            mu = re.search(r'(\w+)\.customUserAgent\s*=\s*([^\n]+)', s)   # yazma
-            ru = re.search(r'([\w.]*(?:etCustom\w*Agent|et_custom\w*agent)[\w.]*)\.text', s, re.I)
-            if mu:
-                var, rhs = mu.group(1), mu.group(2).strip()
-                rhs_h = re.sub(r'(etCustom\w*Agent|et_custom\w*agent)', 'etCustomHwid', rhs, flags=re.I)
-                s = s.replace(mu.group(0), mu.group(0) + f"\n        {var}.customHwid = {rhs_h}")
-            # okuma: setText(... customUserAgent) benzeri
-            mr = re.search(r'([\w.]*(?:etCustom\w*Agent)[\w.]*)\.(?:setText|text\s*=)\s*\(?[^\n]*customUserAgent', s, re.I)
-            if mr:
-                line = mr.group(0)
-                nl = re.sub(r'(etCustom\w*Agent)', 'etCustomHwid', line, flags=re.I).replace("customUserAgent", "customHwid")
-                s = s.replace(line, line + "\n        " + nl)
-            write(act, s); changed.append(act); print("[3] Activity: HWID oku/yaz eklendi (kontrol et)")
-else:
-    print("[3] UYARI: abonelik düzenleme layout'u bulunamadı — view binding sürümü farklı olabilir")
+# 4) HttpUtil: getUrlContentWithUserAgent içinde OkHttp başlıkları
+f = find_file("HttpUtil.kt"); s = read(f)
+anchor = "applyEmbeddedBasicAuthHeader(currentUrl, requestBuilder)"
+must(anchor in s, "HttpUtil'de abonelik isteği kurulumu bulunamadı")
+s = s.replace(anchor, anchor + "\n            com.v2ray.ang.patch.SubHeaders.apply(requestBuilder, request.hwid)", 1)
+write(f, s); print("[4] HttpUtil: HWID başlıkları eklendi")
 
-print(f"\nTOPLAM değişen dosya: {len(set(changed))}")
-print("Not: [2] ve [3] adımları v2rayNG sürümüne göre elle doğrulama isteyebilir.")
+# 5) Arayüz: layout'a et_hwid (et_user_agent bloğunun kopyası)
+lay = os.path.join(main, "res", "layout", "activity_sub_edit.xml"); s = read(lay)
+m = re.search(r'<LinearLayout\b(?:(?!</LinearLayout>).)*?@\+id/et_user_agent(?:(?!</LinearLayout>).)*?</LinearLayout>', s, re.S)
+must(m, "layout'ta et_user_agent bloğu bulunamadı")
+block = m.group(0)
+nb = block.replace("@+id/et_user_agent", "@+id/et_hwid").replace("@string/sub_setting_user_agent", "@string/sub_setting_hwid")
+s = s.replace(block, block + "\n\n            " + nb, 1)
+write(lay, s); print("[5] layout: HWID alanı eklendi")
+
+# 5b) Etiket metni
+n = 0
+for strf in glob.glob(os.path.join(main, "res", "values*", "strings.xml")):
+    t = read(strf)
+    if "sub_setting_user_agent" in t and "sub_setting_hwid" not in t:
+        t = re.sub(r'(<string name="sub_setting_user_agent">.*?</string>)',
+                   lambda mm: mm.group(1) + '\n    <string name="sub_setting_hwid">HWID (boş = gönderilmez)</string>', t, count=1, flags=re.S)
+        write(strf, t); n += 1
+must(n, "strings.xml'de sub_setting_user_agent bulunamadı")
+print(f"[5b] HWID etiketi {n} dil dosyasına eklendi")
+
+# 6) SubEditActivity: oku / yaz
+f = find_file("SubEditActivity.kt"); s = read(f)
+r_old = "binding.etUserAgent.text = Utils.getEditable(subItem.userAgent)"
+w_old = "subItem.userAgent = binding.etUserAgent.text.toString()"
+must(r_old in s, "Activity okuma satırı bulunamadı")
+must(w_old in s, "Activity yazma satırı bulunamadı")
+s = s.replace(r_old, r_old + "\n        binding.etHwid.text = Utils.getEditable(subItem.hwid)", 1)
+s = s.replace(w_old, w_old + "\n        subItem.hwid = binding.etHwid.text.toString()", 1)
+write(f, s); print("[6] SubEditActivity: HWID oku/yaz eklendi")
+
+# 7) Ayrı paket adı + ad: orijinal v2rayNG ile yan yana kurulabilsin
+gp = os.path.join(app, "build.gradle.kts"); s = read(gp)
+s, k = re.subn(r'(applicationId\s*=\s*)"com\.v2ray\.ang"', r'\1"com.v2ray.ang.hwid"', s, count=1)
+must(k, "applicationId bulunamadı")
+write(gp, s)
+for strf in glob.glob(os.path.join(main, "res", "values*", "strings.xml")):
+    t = read(strf)
+    t2 = re.sub(r'(<string name="app_name"[^>]*>)[^<]*(</string>)', r'\1v2rayNG HWID\2', t)
+    if t2 != t: write(strf, t2)
+print("[7] paket: com.v2ray.ang.hwid · ad: v2rayNG HWID")
+
+print("✓ YAMA TAMAM")

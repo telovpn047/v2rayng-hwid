@@ -14,6 +14,8 @@ Boş = otomatik/varsayılan. Abonelik güncellendiğinde bu başlıklarla çekil
 ## Derleme
 `main` dalına push → GitHub Actions v2rayNG kaynağını çeker, yamayı uygular, `v2rayNG-hwid.apk` üretir.
 
-## Yama dosyaları
-- `patch/SubHeaders.kt` — HWID başlık mantığı (boşsa başlık yok)
-- `patch/patch.py` — SubscriptionItem'a `customHwid` alanı, abonelik çekme kodu ve düzenleme ekranı yaması
+## Yama akışı (User-Agent'ın gerçek yolunu izler)
+SubscriptionItem.hwid → AngConfigManager → UrlContentRequest.hwid → HttpUtil (OkHttp başlıkları)
+
+- Paket adı `com.v2ray.ang.hwid`, uygulama adı "v2rayNG HWID": orijinal v2rayNG ile yan yana kurulur.
+- `patch/patch.py` her adımda hedefini bulamazsa açık hata ile durur.
