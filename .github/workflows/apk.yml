@@ -27,6 +27,7 @@ jobs:
           NDK=$(grep -oE 'ndk;[0-9.]+' "$WF" | head -1 | cut -d';' -f2); NDK=${NDK:-29.0.14206865}
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK" >/dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK" >> "$GITHUB_ENV"
           G=up/V2rayNG/app/build.gradle.kts
           grep -q 'ndkVersion' "$G" || sed -i "0,/^android {/s//android {\n    ndkVersion = \"$NDK\"/" "$G"
       - name: hev-socks5-tunnel
