@@ -97,6 +97,10 @@ m = re.search(r'<LinearLayout\b(?:(?!</LinearLayout>).)*?@\+id/et_user_agent(?:(
 must(m, "layout'ta et_user_agent bloğu bulunamadı")
 block = m.group(0)
 nb = block.replace("@+id/et_user_agent", "@+id/et_hwid").replace("@string/sub_setting_user_agent", "@string/sub_setting_hwid")
+nb = re.sub(r'android:inputType="[^"]*"', 'android:inputType="textMultiLine"', nb)
+if 'android:inputType' not in nb:
+    nb = nb.replace('android:id="@+id/et_hwid"', 'android:id="@+id/et_hwid"\n                    android:inputType="textMultiLine"')
+nb = nb.replace('android:id="@+id/et_hwid"', 'android:id="@+id/et_hwid"\n                    android:minLines="1"\n                    android:maxLines="8"\n                    android:hint="8697b9cde384fe92  ya da  X-Hwid: …"', 1)
 s = s.replace(block, block + "\n\n            " + nb, 1)
 write(lay, s); print("[5] layout: HWID alanı eklendi")
 
@@ -106,7 +110,7 @@ for strf in glob.glob(os.path.join(main, "res", "values*", "*.xml")):
     t = read(strf)
     if '<string name="sub_setting_user_agent"' in t and "sub_setting_hwid" not in t:
         t = re.sub(r'(<string name="sub_setting_user_agent">.*?</string>)',
-                   lambda mm: mm.group(1) + '\n    <string name="sub_setting_hwid">HWID (boş = gönderilmez)</string>', t, count=1, flags=re.S)
+                   lambda mm: mm.group(1) + '\n    <string name="sub_setting_hwid">HWID ya da başlıklar (Ad: değer, satır satır · boş = gönderilmez)</string>', t, count=1, flags=re.S)
         write(strf, t); n += 1
 must(n, "strings.xml'de sub_setting_user_agent bulunamadı")
 print(f"[5b] HWID etiketi {n} dil dosyasına eklendi")

@@ -3,35 +3,40 @@ package com.v2ray.ang.patch
 import android.os.Build
 
 /**
- * Abonelik başına elle girilen HWID.
- * Boşsa hiçbir başlık eklenmez (v2rayNG'nin varsayılan davranışı aynen kalır).
- * Doluysa Remnawave'in beklediği başlıklar: x-hwid, x-device-os, x-ver-os, x-device-model.
+ * Abonelik başına elle girilen HWID / başlıklar.
+ *  - Boş: hiçbir başlık eklenmez (v2rayNG varsayılan davranışı).
+ *  - Tek değer (ör. 8697b9cde384fe92): Happ ile aynı set gönderilir:
+ *      X-Hwid, X-Device-Os: Android, X-Ver-Os: <sürüm>, X-Device-Model: <model>
+ *  - "Ad: değer" satırları: yazılan başlıklar aynen gönderilir (User-Agent dahil).
  */
 object SubHeaders {
 
-    /** Sade değer ya da "x-hwid: değer" / "x-hwid=değer" biçimi kabul edilir. */
-    fun parseHwid(raw: String?): String {
+    fun headersFor(raw: String?): Map<String, String> {
         val t = raw?.trim().orEmpty()
-        if (t.isEmpty()) return ""
-        val m = Regex("(?i)^x-hwid\\s*[:=]\\s*(.+)$").find(t)
-        return (m?.groupValues?.get(1) ?: t).trim()
+        if (t.isEmpty()) return emptyMap()
+        val lines = t.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val out = linkedMapOf<String, String>()
+        if (lines.any { it.contains(':') }) {
+            for (l in lines) {
+                val i = l.indexOf(':')
+                if (i <= 0) continue
+                val k = l.substring(0, i).trim()
+                val v = clean(l.substring(i + 1))
+                if (k.isNotEmpty() && k.all { it.isLetterOrDigit() || it == '-' || it == '_' }) out[k] = v
+            }
+            return out
+        }
+        out["X-Hwid"] = clean(lines.first())
+        out["X-Device-Os"] = "Android"
+        out["X-Ver-Os"] = clean(Build.VERSION.RELEASE)
+        out["X-Device-Model"] = clean(Build.MODEL)
+        return out
     }
 
-    fun headersFor(hwid: String?): Map<String, String> {
-        val id = parseHwid(hwid)
-        if (id.isEmpty()) return emptyMap()
-        return linkedMapOf(
-            "x-hwid" to id,
-            "x-device-os" to "Android",
-            "x-ver-os" to clean(Build.VERSION.RELEASE),
-            "x-device-model" to clean(Build.MANUFACTURER + " " + Build.MODEL),
-        )
-    }
-
-    /** OkHttp Request.Builder'a HWID başlıklarını ekler. */
+    /** OkHttp Request.Builder'a başlıkları ekler; aynı adlı başlık (User-Agent dahil) varsa değiştirir. */
     @JvmStatic
-    fun apply(b: okhttp3.Request.Builder, hwid: String?) {
-        for ((k, v) in headersFor(hwid)) b.header(k, v)
+    fun apply(b: okhttp3.Request.Builder, raw: String?) {
+        for ((k, v) in headersFor(raw)) b.header(k, v)
     }
 
     private fun clean(s: String?): String {
