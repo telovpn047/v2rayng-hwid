@@ -16,7 +16,7 @@ jobs:
       - name: v2rayNG kaynağını indir
         run: |
           TAG="${{ github.event.inputs.upstream_tag }}"
-          [ -z "$TAG" ] && TAG=$(gh api repos/2dust/v2rayNG/releases/latest -q .tag_name)
+          [ -z "$TAG" ] && TAG=2.2.6
           echo "UP_TAG=$TAG" >> "$GITHUB_ENV"
           echo "v2rayNG $TAG"
           git clone --depth 1 --branch "$TAG" https://github.com/2dust/v2rayNG.git up
