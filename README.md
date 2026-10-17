@@ -1,21 +1,15 @@
-# v2rayNG — Elle HWID Yaması
+# v2rayNG — Elle HWID / Başlık Yaması
 
-Saf v2rayNG'ye tek özellik ekler: her abonelik için **elle HWID** ve (v2rayNG'de zaten olan)
-**User-Agent** girilebilir. Boş bırakılırsa v2rayNG'nin varsayılan davranışı kullanılır
-(HWID başlığı hiç gönderilmez, User-Agent v2rayNG'nin kendi değeri olur).
+Saf v2rayNG'ye tek özellik ekler: abonelik ekleme/düzenleme ekranında **HWID ya da başlıklar** alanı.
 
-Markalama, reklam, izleme yok. Sadece abonelik çekerken şu başlıklar eklenir (HWID doluysa):
-`x-hwid`, `x-device-os`, `x-ver-os`, `x-device-model`.
+- **Boş:** hiçbir başlık eklenmez (normal v2rayNG).
+- **Tek değer** (`8697b9cde384fe92`): Happ ile aynı set: `X-Hwid`, `X-Device-Os`, `X-Ver-Os`, `X-Device-Model`.
+- **`Ad: değer` satırları:** yazılan başlıklar aynen gönderilir (User-Agent dahil).
 
-## Kullanım
-Abonelik ekle/düzenle ekranında **HWID** alanına değeri yaz (ya da `x-hwid: değer` satırı).
-Boş = otomatik/varsayılan. Abonelik güncellendiğinde bu başlıklarla çekilir.
+User-Agent alanı v2rayNG'nin kendi alanıdır; boşsa `v2rayNG/<sürüm>` kullanılır.
 
-## Derleme
-`main` dalına push → GitHub Actions v2rayNG kaynağını çeker, yamayı uygular, `v2rayNG-hwid.apk` üretir.
+## Akış (User-Agent'ın gerçek yolu)
+SubscriptionItem.hwid → AngConfigManager → UrlContentRequest.hwid → HttpUtil.getUrlContentWithUserAgent (OkHttp)
 
-## Yama akışı (User-Agent'ın gerçek yolunu izler)
-SubscriptionItem.hwid → AngConfigManager → UrlContentRequest.hwid → HttpUtil (OkHttp başlıkları)
-
-- Paket adı `com.v2ray.ang.hwid`, uygulama adı "v2rayNG HWID": orijinal v2rayNG ile yan yana kurulur.
-- `patch/patch.py` her adımda hedefini bulamazsa açık hata ile durur.
+Paket `com.v2ray.ang.hwid`, ad "v2rayNG HWID": orijinal v2rayNG ile yan yana kurulur.
+`patch/patch.py` hedefini bulamazsa açık hata (✗) ile durur; iş akışı ayrıca başlık satırının doğru fonksiyonda olduğunu doğrular.

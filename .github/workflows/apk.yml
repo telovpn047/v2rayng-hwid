@@ -56,7 +56,11 @@ jobs:
           curl -fL --retry 3 -o V2rayNG/app/libs/libv2ray.aar "https://github.com/2dust/AndroidLibXrayLite/releases/download/$T/libv2ray.aar"
 
       - name: HWID yaması
-        run: python3 patch/patch.py up
+        run: |
+          python3 patch/patch.py up
+          echo "--- doğrulama: HWID satırı abonelik fonksiyonunda mı? ---"
+          F=$(find up/V2rayNG/app/src/main -name HttpUtil.kt)
+          awk '/fun getUrlContentWithUserAgent/{f=1} f&&/SubHeaders.apply/{print "✓ getUrlContentWithUserAgent içinde: " NR; ok=1} /^    fun /&&!/getUrlContentWithUserAgent/{f=0} END{if(!ok){print "✗ SubHeaders.apply abonelik fonksiyonunda değil"; exit 1}}' "$F"
 
       - name: APK derle
         env:
@@ -74,7 +78,7 @@ jobs:
               -Pandroid.injected.signing.key.password="$KEYSTORE_PASSWORD"
             rm -f "$RUNNER_TEMP/k.jks"
           else
-            echo "::warning::KEYSTORE_BASE64 yok: debug imzasıyla derleniyor (her derlemede imza değişir)"
+            echo "::warning::KEYSTORE_BASE64 yok: debug imzasıyla derleniyor"
             ./gradlew assemblePlaystoreDebug --no-daemon --stacktrace
           fi
 
